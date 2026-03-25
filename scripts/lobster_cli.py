@@ -7,7 +7,6 @@
 import os
 import sys
 import json
-import time
 import argparse
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -486,16 +485,12 @@ def main():
     pay_p.add_argument("--caller-car-phone", help="叫车人手机号 (默认从 profile 读取)")
 
     # ── pay-status ──
-    ps_p = sub.add_parser("pay-status", help="查询支付状态（阻塞轮询直到支付成功或超时）")
+    ps_p = sub.add_parser("pay-status", help="查询当前支付状态（单次查询，由 Agent 轮询调用）")
     ps_p.add_argument("--order-no", "-o", required=True, help="订单号")
-    ps_p.add_argument("--interval", type=int, default=5, help="轮询间隔秒数 (默认 5)")
-    ps_p.add_argument("--timeout", type=int, default=300, help="支付超时秒数 (默认 300)")
 
     # ── query-order ──
-    qo_p = sub.add_parser("query-order", help="查询订单状态（阻塞轮询直到司机接单或超时）")
+    qo_p = sub.add_parser("query-order", help="查询当前订单状态（单次查询，由 Agent 轮询调用）")
     qo_p.add_argument("--order-no", "-o", required=True, help="订单号")
-    qo_p.add_argument("--interval", type=int, default=5, help="轮询间隔秒数 (默认 5)")
-    qo_p.add_argument("--timeout", type=int, default=300, help="匹配超时秒数 (默认 300)")
 
     # ── driver-location ──
     dl_p = sub.add_parser("driver-location", help="获取司机位置")
@@ -570,57 +565,25 @@ def main():
             print(format_pay_order(data))
 
         elif args.command == "pay-status":
-            # 首次查询
             data = client.pay_status(args.order_no)
-            pay_st = data.get("pay_status", 0)
-
-            if pay_st == 2:
-                # 已支付，直接返回
+            if args.json:
+                print(json.dumps(data, indent=2, ensure_ascii=False))
+            else:
                 print(format_pay_status(data))
-                return
-
-            # 未支付，输出当前状态后进入阻塞轮询
-            print(format_pay_status(data))
-            print(f"\n等待支付中 (每 {args.interval}s 查询，超时 {args.timeout}s) ...")
-
-            start = time.time()
-            while time.time() - start < args.timeout:
-                time.sleep(args.interval)
-                data = client.pay_status(args.order_no)
-                pay_st = data.get("pay_status", 0)
-                if pay_st == 2:
-                    print(format_pay_status(data))
-                    print("\n支付成功！后台已自动为您创建打车订单。")
-                    return
-
-            print(f"\n支付超时（{args.timeout}s），订单号: {args.order_no}")
 
         elif args.command == "query-order":
-            # 首次查询
             data = client.order_detail(args.order_no)
-            driver = data.get("driver")
-
-            if driver:
-                # 已有司机，直接返回
-                print(format_order_status(data))
-                return
-
-            # 未匹配到司机，输出提示后进入阻塞轮询
-            print("ORDER STATUS:")
-            print("-" * 60)
-            print("  正在为您匹配最佳司机，请耐心等待...")
-            print(f"\n等待司机接单中 (每 {args.interval}s 查询，超时 {args.timeout}s) ...")
-
-            start = time.time()
-            while time.time() - start < args.timeout:
-                time.sleep(args.interval)
-                data = client.order_detail(args.order_no)
+            if args.json:
+                print(json.dumps(data, indent=2, ensure_ascii=False))
+            else:
                 driver = data.get("driver")
                 if driver:
                     print(format_order_status(data))
-                    return
-
-            print(f"\n匹配超时（{args.timeout}s），暂未有司机接单，订单号: {args.order_no}")
+                else:
+                    print("ORDER STATUS:")
+                    print("-" * 60)
+                    print(f"  订单状态: {data.get('status_text', '未知')} (Code: {data.get('status', 'N/A')})")
+                    print("  正在为您匹配最佳司机，请耐心等待...")
 
         elif args.command == "driver-location":
             result = client.get_driver_location(args.order_id)
