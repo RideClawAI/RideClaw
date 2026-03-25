@@ -75,14 +75,21 @@ pip install httpx
 1. **初始化**: `python scripts/lobster_cli.py init`
 2. **搜索出发地**: `python scripts/lobster_cli.py location-search --keywords "出发地" --city "城市"`
 3. **搜索目的地**: `python scripts/lobster_cli.py location-search --keywords "目的地" --city "城市"`
-4. **预估价格**: `python scripts/lobster_cli.py estimate --from-lng ... --to-lng ...`
-5. **支付下单（自动链式执行，不可拆分）**:
-   - 5a. 调用 `pay --no-wait` → 拿到支付链接和订单号 → 立即展示给用户
-   - 5b. **紧接着自动调用** `pay-status --order-no xxx` 等待支付结果（无需等待用户回复）
-   - 5c. 支付成功后，**紧接着自动调用** `query-order --order-no xxx` 等待司机接单
-   - 5d. 司机接单后，**紧接着自动开始**每隔 10s 调用 `driver-location --order-id xxx`，将行程动态告知用户，直到行程结束
+4. **确认上下车点（需要用户确认）**: Agent 将搜索到的出发地和目的地整理后展示给用户，等待用户确认无误后再继续。若用户要求修改，重新搜索对应地点。示例：
+   ```text
+   请确认您的行程信息：
+     上车点: 北京西站 - 北京市丰台区莲花池东路118号 (116.322,39.894)
+     下车点: 文景东街 - 北京市通州区文景东街 (116.655,39.854)
+   确认无误请回复"确认"，如需修改请告诉我。
+   ```
+5. **预估价格**: 用户确认后，调用 `python scripts/lobster_cli.py estimate --from-lng ... --to-lng ...`
+6. **支付下单（自动链式执行，不可拆分）**:
+   - 6a. 调用 `pay --no-wait` → 拿到支付链接和订单号 → 立即展示给用户
+   - 6b. **紧接着自动调用** `pay-status --order-no xxx` 等待支付结果（无需等待用户回复）
+   - 6c. 支付成功后，**紧接着自动调用** `query-order --order-no xxx` 等待司机接单
+   - 6d. 司机接单后，**紧接着自动开始**每隔 10s 调用 `driver-location --order-id xxx`，将行程动态告知用户，直到行程结束
 
-> **重要：步骤 5a → 5b → 5c → 5d 是一个连续自动执行的链路，Agent 必须在每步命令返回后立即执行下一步，全程不需要用户确认或输入。**
+> **重要：步骤 4 必须等待用户确认后才能继续。步骤 6a → 6b → 6c → 6d 是一个连续自动执行的链路，Agent 必须在每步命令返回后立即执行下一步，全程不需要用户确认或输入。**
 
 ## Command Reference
 
@@ -243,7 +250,7 @@ python scripts/lobster_cli.py pay \
 - `--product-name`: 车型名称 (required)
 - `--estimate-price`: 预估价格，单位分 (required)
 - `--caller-car-phone`: 叫车人手机号 (optional, 默认从 profile 读取)
-- `--no-wait`: 只生成订单立即返回，不轮询 (Agent 场景必须加)
+- `--no-wait`: 只生成订单立即返回，不轮询
 
 **Output:**
 
@@ -320,7 +327,7 @@ python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
 
 #### query-order
 
-阻塞式等待司机接单。命令会先输出"正在为您匹配最佳司机"，然后内部自动轮询直到有司机接单或超时。匹配成功后输出司机信息并返回。
+等待司机接单。命令会先输出"正在为您匹配最佳司机"，然后内部自动轮询直到有司机接单或超时。匹配成功后输出司机信息并返回。
 
 Agent 在 `pay-status` 确认支付成功后，调用此命令等待司机接单即可，无需自行循环调用。
 
@@ -350,7 +357,7 @@ python scripts/lobster_cli.py query-order \
 
 #### driver-location
 
-获取司机实时位置与行程动态，返回司机当前位置和行程进度信息（如距离终点还有多远等）。行程结束时会返回包含"行程已完成"语义的文本，Agent 据此判断是否停止轮询。
+获取司机实时位置与行程动态，返回司机当前位置和行程进度信息（如距离终点还有多远等）。行程结束时会返回包含"行程已完成"语义的文本，据此判断是否停止轮询。
 
 ```bash
 python scripts/lobster_cli.py driver-location \
@@ -476,7 +483,7 @@ python scripts/lobster_cli.py pay \
 
 # 5b. 自动轮询支付状态（无需用户确认，紧接着执行）
 python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
-# → 支付成功后自动创建打车订单
+# → 支付成功后后台自动创建打车订单
 
 # 5c. 自动等待司机接单（支付成功后紧接着执行）
 python scripts/lobster_cli.py query-order --order-no "RC20260324405660"
