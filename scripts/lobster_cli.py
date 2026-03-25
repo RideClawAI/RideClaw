@@ -13,10 +13,9 @@ from typing import Optional, Dict, Any, List
 
 import httpx
 
-
 # ── 默认配置 ──────────────────────────────────────────────────────────────────
 
-DEFAULT_BASE_URL = "http://rideclaw.dudubashi.com/api/v1/"
+DEFAULT_BASE_URL = "https://rideclaw.dudubashi.com/api/v1/"
 
 CONFIG_DIR = Path.home() / ".lobster_ride"
 CONFIG_FILE = CONFIG_DIR / "profile.json"
