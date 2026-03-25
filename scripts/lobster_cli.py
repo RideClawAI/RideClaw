@@ -17,7 +17,7 @@ import httpx
 
 # ── 默认配置 ──────────────────────────────────────────────────────────────────
 
-DEFAULT_BASE_URL = "https://rideclaw.dudubashi.com/api/v1/"
+DEFAULT_BASE_URL = "http://rideclaw.dudubashi.com/api/v1/"
 
 CONFIG_DIR = Path.home() / ".lobster_ride"
 CONFIG_FILE = CONFIG_DIR / "profile.json"
@@ -98,24 +98,6 @@ def _geocode_address(client: "LobsterClient", address: str, city: str) -> Option
         pass
     return None
 
-
-def format_profile(profile: Dict[str, Any]) -> str:
-    """格式化显示用户配置"""
-    if not profile:
-        return "尚未初始化，请运行: lobster-cli init"
-
-    lines = ["USER PROFILE:", "-" * 40]
-    lines.append(f"  手机号:   {profile.get('phone', '未设置')}")
-    lines.append(f"  城市:     {profile.get('city', '未设置')}")
-    lines.append(f"  家:       {profile.get('home', '未设置')}")
-    if profile.get("home_location"):
-        loc = profile["home_location"]
-        lines.append(f"            ({loc.get('name', '')}  {loc.get('lng', '')},{loc.get('lat', '')})")
-    lines.append(f"  公司:     {profile.get('company', '未设置')}")
-    if profile.get("company_location"):
-        loc = profile["company_location"]
-        lines.append(f"            ({loc.get('name', '')}  {loc.get('lng', '')},{loc.get('lat', '')})")
-    return "\n".join(lines)
 
 
 # ── 客户端 ────────────────────────────────────────────────────────────────────
@@ -253,7 +235,7 @@ class LobsterClient:
 
     def cancel_order(self, system_no: str) -> Dict[str, Any]:
         """取消订单"""
-        return self._rest_get(f"order/{system_no}/cancel")
+        return self._rest_post(f"order/{system_no}/cancel")
 
 
 # ── 输出格式化 ────────────────────────────────────────────────────────────────
@@ -329,8 +311,8 @@ def format_pay_status(data: Dict[str, Any]) -> str:
     """格式化支付状态"""
     lines = ["PAY STATUS:", "-" * 60]
     lines.append(f"  订单号:   {data.get('system_no', 'N/A')}")
-    lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')}")
-    lines.append(f"  订单状态: {data.get('order_status_text', 'N/A')}")
+    lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')} (Code: {data.get('pay_status', 'N/A')})")
+    lines.append(f"  订单状态: {data.get('order_status_text', 'N/A')} (Code: {data.get('order_status', 'N/A')})")
     return "\n".join(lines)
 
 
@@ -343,7 +325,7 @@ def format_order_status(data: Dict[str, Any]) -> str:
     """格式化司机匹配成功后的订单状态"""
     driver = data.get("driver", {}) or {}
     lines = ["ORDER STATUS:", "-" * 60]
-    lines.append("  已为您匹配到最佳司机！")
+    lines.append(f"  已为您匹配到最佳司机！ (Status Code: {data.get('status', 'N/A')})")
     lines.append(f"  司机: {driver.get('name', 'N/A')}")
     lines.append(f"  电话: {driver.get('phone', 'N/A')}")
     lines.append(f"  车辆: {driver.get('car_model', 'N/A')} ({driver.get('car_plate', 'N/A')})")
@@ -357,6 +339,7 @@ def format_driver_location(data: Dict[str, Any]) -> str:
     
     # 初始化输出行列表，添加标题和分割线
     lines = ["TRIP STATUS & DRIVER LOCATION:", "-" * 60]
+    lines.append(f"  当前订单状态码: {data.get('status', 'N/A')}")
     
     if driver_raw_text:
         # 如果存在大模型生成的丰富行程动态（如“离终点还有5.0公里”），直接排版展示
@@ -405,15 +388,17 @@ def format_order_detail(data: Dict[str, Any]) -> str:
         lines.append("-" * 60)
     
     # 逐一添加基础订单信息，未获取到时默认显示 N/A
-    lines.append(f"  订单号:   {data.get('system_no', 'N/A')}")
-    lines.append(f"  创建时间: {data.get('created_at', 'N/A')}")
-    lines.append(f"  状态:     {data.get('status_text', 'N/A')}")
-    lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')}")
-    lines.append(f"  出发地:   {data.get('from_name', 'N/A')}")
-    lines.append(f"  目的地:   {data.get('to_name', 'N/A')}")
-    lines.append(f"  车型:     {data.get('product_name', 'N/A')}")
-    lines.append(f"  预估价格: {est_str}")
-    lines.append(f"  实际价格: {actual_str}")
+    lines.append(f"  订单号:     {data.get('system_no', 'N/A')}")
+    lines.append(f"  创建时间:   {data.get('created_at', 'N/A')}")
+    lines.append(f"  订单状态码: {data.get('status', 'N/A')}")
+    lines.append(f"  状态描述:   {data.get('status_text', 'N/A')}")
+    lines.append(f"  支付状态码: {data.get('pay_status', 'N/A')}")
+    lines.append(f"  支付描述:   {data.get('pay_status_text', 'N/A')}")
+    lines.append(f"  出发地:     {data.get('from_name', 'N/A')}")
+    lines.append(f"  目的地:     {data.get('to_name', 'N/A')}")
+    lines.append(f"  车型:       {data.get('product_name', 'N/A')}")
+    lines.append(f"  预估价格:   {est_str}")
+    lines.append(f"  实际价格:   {actual_str}")
 
     # 获取司机基础信息（主要作为结构化数据的补充备份）
     # 如果行程动态里已经包含了详细的司机信息，这里的结构化展示依然保留，作为兜底
@@ -531,18 +516,6 @@ def main():
         sys.exit(1)
 
     # ── 本地命令 ──
-    if args.command == "init":
-        client = LobsterClient(base_url=args.base_url)
-        profile = init_profile(
-            phone=args.phone,
-            home=args.home,
-            company=args.company,
-            city=args.city,
-            client=client,
-        )
-        print("配置已保存。\n")
-        print(format_profile(profile))
-        return
 
     if args.command == "profile":
         profile = load_profile()
