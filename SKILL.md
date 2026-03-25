@@ -135,6 +135,5 @@ python scripts/lobster_cli.py order-detail --order-no "RC20260324405660"
 
 ## Notes
 
-- 首次使用先运行 `init` 绑定手机号
 - 所有命令支持 `--json` 输出 JSON 格式
 - 坐标格式为字符串（如 "116.397128"）
