@@ -220,6 +220,7 @@ class LobsterClient:
         product_category: str,
         product_name: str,
         estimate_price: int,
+        caller_car_phone: str,
     ) -> Dict[str, Any]:
         """生成支付订单，返回 pay_url"""
         return self._rest_post("order/create", {
@@ -233,48 +234,26 @@ class LobsterClient:
             "product_category": product_category,
             "product_name": product_name,
             "estimate_price": estimate_price,
+            "caller_car_phone": caller_car_phone,
         })
 
-    def pay_status(self, order_no: str) -> Dict[str, Any]:
+    def pay_status(self, system_no: str) -> Dict[str, Any]:
         """查询支付状态"""
-        return self._rest_get(f"order/{order_no}/pay-status")
+        return self._rest_get(f"order/{system_no}/pay-status")
 
-    def order_detail(self, order_no: str) -> Dict[str, Any]:
+    def order_detail(self, system_no: str) -> Dict[str, Any]:
         """查询订单详情"""
-        return self._rest_get(f"order/{order_no}/detail")
+        return self._rest_get(f"order/{system_no}/detail")
 
-    # ── 打车 (MCP) ──
+    # ── 打车 ──
 
-    def create_ride_order(
-        self,
-        product_category: str,
-        estimate_trace_id: str,
-        phone: str = "",
-    ) -> Dict[str, Any]:
-        """创建真实打车订单（支付成功后调用）"""
-        return self._mcp_call("taxi_create_order", {
-            "product_category": product_category,
-            "estimate_trace_id": estimate_trace_id,
-            "caller_car_phone": phone,
-        })
-
-    def query_order(self, order_id: str) -> Dict[str, Any]:
-        """查询订单状态"""
-        return self._mcp_call("taxi_query_order", {
-            "order_id": order_id,
-        })
-
-    def get_driver_location(self, order_id: str) -> Dict[str, Any]:
+    def get_driver_location(self, system_no: str) -> Dict[str, Any]:
         """获取司机位置"""
-        return self._mcp_call("taxi_get_driver_location", {
-            "order_id": order_id,
-        })
+        return self._rest_get(f"order/{system_no}/detail")
 
-    def cancel_order(self, order_id: str) -> Dict[str, Any]:
+    def cancel_order(self, system_no: str) -> Dict[str, Any]:
         """取消订单"""
-        return self._mcp_call("taxi_cancel_order", {
-            "order_id": order_id,
-        })
+        return self._rest_get(f"order/{system_no}/cancel")
 
 
 # ── 输出格式化 ────────────────────────────────────────────────────────────────
@@ -338,7 +317,7 @@ def format_pay_order(data: Dict[str, Any]) -> str:
     amount = data.get("amount", 0)
     amount_yuan = amount / 100 if isinstance(amount, (int, float)) else amount
     lines = ["PAY ORDER:", "-" * 60]
-    lines.append(f"  订单号:   {data.get('order_no', 'N/A')}")
+    lines.append(f"  订单号:   {data.get('system_no', 'N/A')}")
     lines.append(f"  金额:     ¥{amount_yuan:.2f}")
     lines.append(f"  支付链接: {data.get('pay_url', 'N/A')}")
     lines.append("")
@@ -349,7 +328,7 @@ def format_pay_order(data: Dict[str, Any]) -> str:
 def format_pay_status(data: Dict[str, Any]) -> str:
     """格式化支付状态"""
     lines = ["PAY STATUS:", "-" * 60]
-    lines.append(f"  订单号:   {data.get('order_no', 'N/A')}")
+    lines.append(f"  订单号:   {data.get('system_no', 'N/A')}")
     lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')}")
     lines.append(f"  订单状态: {data.get('order_status_text', 'N/A')}")
     return "\n".join(lines)
@@ -360,20 +339,73 @@ def format_order_result(result: Dict[str, Any]) -> str:
     return _parse_mcp_text(result)
 
 
-def format_driver_location(result: Dict[str, Any]) -> str:
-    """格式化司机位置"""
-    return _parse_mcp_text(result)
+def format_order_status(data: Dict[str, Any]) -> str:
+    """格式化司机匹配成功后的订单状态"""
+    driver = data.get("driver", {}) or {}
+    lines = ["ORDER STATUS:", "-" * 60]
+    lines.append("  已为您匹配到最佳司机！")
+    lines.append(f"  司机: {driver.get('name', 'N/A')}")
+    lines.append(f"  电话: {driver.get('phone', 'N/A')}")
+    lines.append(f"  车辆: {driver.get('car_model', 'N/A')} ({driver.get('car_plate', 'N/A')})")
+    return "\n".join(lines)
+
+
+def format_driver_location(data: Dict[str, Any]) -> str:
+    """格式化司机位置与行程动态"""
+    # 提取底层订单详情接口返回的数据，专注于行程状态展示
+    driver_raw_text = data.get("query_raw_text")
+    
+    # 初始化输出行列表，添加标题和分割线
+    lines = ["TRIP STATUS & DRIVER LOCATION:", "-" * 60]
+    
+    if driver_raw_text:
+        # 如果存在大模型生成的丰富行程动态（如“离终点还有5.0公里”），直接排版展示
+        for raw_line in driver_raw_text.split('\n'):
+            if raw_line.strip():
+                lines.append(f"  {raw_line.strip()}")
+    else:
+        # 如果暂无行程动态文本，提供基础的订单状态和司机信息兜底
+        status_text = data.get("status_text", "未知状态")
+        lines.append(f"  当前订单状态: {status_text}")
+        
+        driver = data.get("driver")
+        if driver:
+            lines.append(f"  司机: {driver.get('name', 'N/A')}")
+            lines.append(f"  电话: {driver.get('phone', 'N/A')}")
+            lines.append(f"  车辆: {driver.get('car_model', 'N/A')} ({driver.get('car_plate', 'N/A')})")
+        else:
+            lines.append("  司机: 暂无司机接单，请耐心等待...")
+
+    return "\n".join(lines)
 
 
 def format_order_detail(data: Dict[str, Any]) -> str:
     """格式化订单详情"""
+    # 提取预估价格，若存在则转换为元（数据中单位为分），并保留两位小数
     est_price = data.get("estimate_price")
     est_str = f"¥{est_price / 100:.2f}" if isinstance(est_price, (int, float)) else "N/A"
+    
+    # 提取实际价格，若存在则转换为元，并保留两位小数
     actual = data.get("actual_price")
     actual_str = f"¥{actual / 100:.2f}" if isinstance(actual, (int, float)) else "N/A"
 
+    # 初始化输出行列表，添加标题和分割线
     lines = ["ORDER DETAIL:", "-" * 60]
-    lines.append(f"  订单号:   {data.get('order_no', 'N/A')}")
+    
+    # 获取行程动态信息 (driver_raw_text)
+    # 因为它包含了丰富的行程状态和司机信息（如：“司机已经到达...”、“行程进行中...”），
+    # 我们将其作为最醒目的“行程动态”展示在订单基础信息之前，让用户一眼就能看到当前进度。
+    driver_raw_text = data.get("driver_raw_text")
+    if driver_raw_text:
+        lines.append("【行程动态】")
+        # 将原始文本中的 \n 替换为真实的换行，并加上缩进，保持排版整洁
+        for raw_line in driver_raw_text.split('\n'):
+            if raw_line.strip():
+                lines.append(f"  {raw_line.strip()}")
+        lines.append("-" * 60)
+    
+    # 逐一添加基础订单信息，未获取到时默认显示 N/A
+    lines.append(f"  订单号:   {data.get('system_no', 'N/A')}")
     lines.append(f"  创建时间: {data.get('created_at', 'N/A')}")
     lines.append(f"  状态:     {data.get('status_text', 'N/A')}")
     lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')}")
@@ -383,14 +415,21 @@ def format_order_detail(data: Dict[str, Any]) -> str:
     lines.append(f"  预估价格: {est_str}")
     lines.append(f"  实际价格: {actual_str}")
 
+    # 获取司机基础信息（主要作为结构化数据的补充备份）
+    # 如果行程动态里已经包含了详细的司机信息，这里的结构化展示依然保留，作为兜底
     driver = data.get("driver")
     if driver:
         lines.append(f"  司机:     {driver.get('name', 'N/A')}")
-        lines.append(f"  车牌:     {driver.get('plate', 'N/A')}")
         lines.append(f"  电话:     {driver.get('phone', 'N/A')}")
+        # 根据新的 DriverInfo 数据结构，增加车辆型号展示
+        lines.append(f"  车辆型号: {driver.get('car_model', 'N/A')}")
+        # 将原有的 plate 字段更新为 car_plate
+        lines.append(f"  车牌:     {driver.get('car_plate', 'N/A')}")
     else:
+        # 若暂无司机接单，则友好提示
         lines.append("  司机:     等待接单")
 
+    # 最终将所有行用换行符拼接为字符串返回
     return "\n".join(lines)
 
 
@@ -459,19 +498,19 @@ def main():
     pay_p.add_argument("--product-category", "-p", required=True, help="车型品类代码")
     pay_p.add_argument("--product-name", required=True, help="车型名称")
     pay_p.add_argument("--estimate-price", required=True, type=int, help="预估价格 (分)")
-    pay_p.add_argument("--no-wait", action="store_true", default=False,
-                       help="只生成支付订单，不轮询等待支付")
-    pay_p.add_argument("--interval", type=int, default=3, help="轮询间隔秒数 (默认 3)")
-    pay_p.add_argument("--timeout", type=int, default=300, help="支付超时秒数 (默认 300)")
-    pay_p.add_argument("--phone", help="叫车人手机号 (默认读取 profile)")
+    pay_p.add_argument("--caller-car-phone", help="叫车人手机号 (默认从 profile 读取)")
 
     # ── pay-status ──
-    ps_p = sub.add_parser("pay-status", help="查询支付状态")
+    ps_p = sub.add_parser("pay-status", help="查询支付状态（阻塞轮询直到支付成功或超时）")
     ps_p.add_argument("--order-no", "-o", required=True, help="订单号")
+    ps_p.add_argument("--interval", type=int, default=5, help="轮询间隔秒数 (默认 5)")
+    ps_p.add_argument("--timeout", type=int, default=300, help="支付超时秒数 (默认 300)")
 
     # ── query-order ──
-    qo_p = sub.add_parser("query-order", help="查询订单状态")
-    qo_p.add_argument("--order-id", "-o", required=True, help="订单 ID")
+    qo_p = sub.add_parser("query-order", help="查询订单状态（阻塞轮询直到司机接单或超时）")
+    qo_p.add_argument("--order-no", "-o", required=True, help="订单号")
+    qo_p.add_argument("--interval", type=int, default=5, help="轮询间隔秒数 (默认 5)")
+    qo_p.add_argument("--timeout", type=int, default=300, help="匹配超时秒数 (默认 300)")
 
     # ── driver-location ──
     dl_p = sub.add_parser("driver-location", help="获取司机位置")
@@ -542,7 +581,10 @@ def main():
                 print(format_estimate_result(data))
 
         elif args.command == "pay":
-            # 步骤 1: 生成支付订单
+            phone = args.caller_car_phone or load_profile().get("phone")
+            if not phone:
+                print("Error: 未提供手机号，请通过 --caller-car-phone 指定或先运行 init 配置", file=sys.stderr)
+                sys.exit(1)
             data = client.create_pay_order(
                 estimate_trace_id=args.estimate_trace_id,
                 from_lng=args.from_lng, from_lat=args.from_lat, from_name=args.from_name,
@@ -550,52 +592,62 @@ def main():
                 product_category=args.product_category,
                 product_name=args.product_name,
                 estimate_price=args.estimate_price,
+                caller_car_phone=phone,
             )
-            order_no = data.get("order_no", "")
             print(format_pay_order(data))
 
-            if args.no_wait or not order_no:
+        elif args.command == "pay-status":
+            # 首次查询
+            data = client.pay_status(args.order_no)
+            pay_st = data.get("pay_status", 0)
+
+            if pay_st == 2:
+                # 已支付，直接返回
+                print(format_pay_status(data))
                 return
 
-            # 步骤 2: 轮询等待支付
-            print(f"\n等待支付中 (每 {args.interval}s 查询一次，超时 {args.timeout}s) ...")
+            # 未支付，输出当前状态后进入阻塞轮询
+            print(format_pay_status(data))
+            print(f"\n等待支付中 (每 {args.interval}s 查询，超时 {args.timeout}s) ...")
+
             start = time.time()
-            paid = False
             while time.time() - start < args.timeout:
                 time.sleep(args.interval)
-                status = client.pay_status(order_no)
-                pay_st = status.get("pay_status", 0)
-                elapsed = int(time.time() - start)
-                print(f"  [{elapsed}s] {status.get('pay_status_text', '查询中...')}")
-                if pay_st == 2:  # 已支付
-                    paid = True
-                    break
+                data = client.pay_status(args.order_no)
+                pay_st = data.get("pay_status", 0)
+                if pay_st == 2:
+                    print(format_pay_status(data))
+                    print("\n支付成功！后台已自动为您创建打车订单。")
+                    return
 
-            if not paid:
-                print("\n支付超时，请手动查询: lobster-cli pay-status --order-no " + order_no)
-                return
-
-            # 步骤 3: 支付成功 → 创建真实打车订单
-            print("\n支付成功！正在为您创建打车订单 ...")
-            phone = args.phone or load_profile().get("phone", "")
-            ride_result = client.create_ride_order(
-                args.product_category, args.estimate_trace_id, phone,
-            )
-            print(format_order_result(ride_result))
-
-        elif args.command == "pay-status":
-            data = client.pay_status(args.order_no)
-            if args.json:
-                print(json.dumps(data, indent=2, ensure_ascii=False))
-            else:
-                print(format_pay_status(data))
+            print(f"\n支付超时（{args.timeout}s），订单号: {args.order_no}")
 
         elif args.command == "query-order":
-            result = client.query_order(args.order_id)
-            if args.json:
-                print(json.dumps(result, indent=2, ensure_ascii=False))
-            else:
-                print(format_order_result(result))
+            # 首次查询
+            data = client.order_detail(args.order_no)
+            driver = data.get("driver")
+
+            if driver:
+                # 已有司机，直接返回
+                print(format_order_status(data))
+                return
+
+            # 未匹配到司机，输出提示后进入阻塞轮询
+            print("ORDER STATUS:")
+            print("-" * 60)
+            print("  正在为您匹配最佳司机，请耐心等待...")
+            print(f"\n等待司机接单中 (每 {args.interval}s 查询，超时 {args.timeout}s) ...")
+
+            start = time.time()
+            while time.time() - start < args.timeout:
+                time.sleep(args.interval)
+                data = client.order_detail(args.order_no)
+                driver = data.get("driver")
+                if driver:
+                    print(format_order_status(data))
+                    return
+
+            print(f"\n匹配超时（{args.timeout}s），暂未有司机接单，订单号: {args.order_no}")
 
         elif args.command == "driver-location":
             result = client.get_driver_location(args.order_id)
