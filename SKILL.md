@@ -76,9 +76,13 @@ pip install httpx
 2. **搜索出发地**: `python scripts/lobster_cli.py location-search --keywords "出发地" --city "城市"`
 3. **搜索目的地**: `python scripts/lobster_cli.py location-search --keywords "目的地" --city "城市"`
 4. **预估价格**: `python scripts/lobster_cli.py estimate --from-lng ... --to-lng ...`
-5. **支付并下单**: `python scripts/lobster_cli.py pay --product-category ... --estimate-trace-id ...`
-6. **查询订单**: `python scripts/lobster_cli.py query-order --order-no ...`
-7. **获取司机位置**: `python scripts/lobster_cli.py driver-location --order-id ...`
+5. **支付下单（自动链式执行，不可拆分）**:
+   - 5a. 调用 `pay --no-wait` → 拿到支付链接和订单号 → 立即展示给用户
+   - 5b. **紧接着自动调用** `pay-status --order-no xxx` 等待支付结果（无需等待用户回复）
+   - 5c. 支付成功后，**紧接着自动调用** `query-order --order-no xxx` 等待司机接单
+   - 5d. 司机接单后，**紧接着自动开始**每隔 10s 调用 `driver-location --order-id xxx`，将行程动态告知用户，直到行程结束
+
+> **重要：步骤 5a → 5b → 5c → 5d 是一个连续自动执行的链路，Agent 必须在每步命令返回后立即执行下一步，全程不需要用户确认或输入。**
 
 ## Command Reference
 
@@ -219,7 +223,7 @@ python scripts/lobster_cli.py estimate \
 
 #### pay
 
-生成支付订单并立即返回支付链接。Agent 必须先将支付链接发送给用户，然后再通过 `pay-status` 轮询支付状态。
+生成支付订单并立即返回支付链接。**Agent 拿到输出后必须立即展示支付链接，然后自动调用 `pay-status` 轮询支付状态，整个过程无需等待用户回复。**
 
 ```bash
 python scripts/lobster_cli.py pay \
@@ -271,15 +275,17 @@ python scripts/lobster_cli.py pay \
 如果需要调整起终点或车型，随时和我说。
 ```
 
-拿到输出后，Agent 必须立即将订单号、金额、支付链接发送给用户，然后使用 `pay-status` 等待支付结果。
+拿到输出后，Agent 的执行流程如下（全程自动，不等待用户回复）：
+
+1. **立即**将订单号、金额、支付链接展示给用户
+2. **紧接着自动调用** `pay-status --order-no xxx` 等待支付结果
+3. 支付成功后，**紧接着自动调用** `query-order --order-no xxx` 等待司机接单
 
 ***
 
 #### pay-status
 
-阻塞式查询支付状态。命令会先返回当前状态，然后内部自动轮询直到支付成功或超时。支付成功后会自动创建打车订单。
-
-Agent 在将支付链接发给用户后，调用此命令等待支付结果即可，无需自行循环调用。
+阻塞式查询支付状态（由 Agent 在 `pay` 返回后自动调用，无需用户触发）。命令会先返回当前状态，然后内部自动轮询直到支付成功或超时。支付成功后会自动创建打车订单。
 
 ```bash
 python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
@@ -304,12 +310,13 @@ python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
 提示：匹配成功后我会立即通知您。如需取消，请回复"取消呼叫"。
 ```
 
-**Agent 调用流程：**
+**Agent 调用流程（全程自动执行，不等待用户输入）：**
 
-1. 调用 `pay` → 拿到支付链接、订单号、金额
-2. **立即**将支付链接发送给用户
-3. 调用 `pay-status --order-no xxx`，命令会阻塞等待支付结果
-4. 命令返回后，将支付结果告知用户（成功/超时）
+1. 调用 `pay --no-wait` → 拿到支付链接、订单号、金额
+2. **立即**将支付链接展示给用户
+3. **紧接着自动调用** `pay-status --order-no xxx` 等待支付结果
+4. 支付成功后，**紧接着自动调用** `query-order --order-no xxx` 等待司机接单
+5. 司机接单后，**紧接着自动开始**每隔 10s 调用 `driver-location --order-id xxx`，直到行程结束
 
 #### query-order
 
@@ -371,12 +378,11 @@ python scripts/lobster_cli.py driver-location \
   感谢使用龙虾出行，祝您愉快！
 ```
 
-**Agent 调用流程：**
+**Agent 调用流程（全程自动执行，司机接单后立即开始）：**
 
-1. `pay-status` 返回支付成功后，调用 `query-order --order-no xxx`，命令会阻塞等待司机接单
-2. 命令返回后，将司机信息告知用户
-3. 然后每隔 10s 调用 `driver-location --order-id xxx`，将行程动态返回给用户
-4. 当 `driver-location` 返回的内容包含行程已完成的语义时，停止轮询，告知用户行程结束
+1. `query-order` 返回司机接单后，**立即自动开始**每隔 10s 调用 `driver-location --order-id xxx`
+2. 每次将行程动态告知用户
+3. 当 `driver-location` 返回的内容包含行程已完成的语义时，停止轮询，告知用户行程结束
 
 #### cancel-order
 
@@ -458,23 +464,27 @@ python scripts/lobster_cli.py estimate \
   --to-lng "116.655" --to-lat "39.854" --to-name "文景东街"
 # 记录 product_category 和 estimate_trace_id
 
-# 5. 支付（核心步骤，支付成功后后台自动创建订单）
+# 5. 支付（Agent 自动链式执行 5a→5b→5c，不等待用户输入）
+# 5a. 生成支付链接
 python scripts/lobster_cli.py pay \
   --estimate-trace-id "0a88bed669c260c39a8704fa9b41b1b0" \
   --from-lng "116.404" --from-lat "39.877" --from-name "永定门桥" \
   --to-lng "116.655" --to-lat "39.854" --to-name "文景东街" \
-  --product-category "201" --product-name "特惠快车" --estimate-price 1000
-# → 输出支付链接 → 打开链接付款 → 自动轮询 → 支付成功后后台自动创建订单
-# 记录 order_id
+  --product-category "201" --product-name "特惠快车" --estimate-price 1000 \
+  --no-wait
+# → 立即展示支付链接给用户
 
-# 6. 等待司机接单（阻塞轮询，匹配成功后返回司机信息）
+# 5b. 自动轮询支付状态（无需用户确认，紧接着执行）
+python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
+# → 支付成功后自动创建打车订单
+
+# 5c. 自动等待司机接单（支付成功后紧接着执行）
 python scripts/lobster_cli.py query-order --order-no "RC20260324405660"
 
-# 7. 获取司机实时位置（每10s调用一次，直到行程结束）
+# 5d. 司机接单后自动轮询司机位置（每10s，直到行程结束）
 python scripts/lobster_cli.py driver-location --order-id "2j08KLO61gHGsc"
-# Agent 根据返回内容判断行程是否结束，结束则停止轮询
 
-# 8. 行程结束后查看详情
+# 6. 行程结束后查看详情
 python scripts/lobster_cli.py order-detail --order-no "RC20260324405660"
 
 # (可选) 取消订单
@@ -502,5 +512,6 @@ python scripts/lobster_cli.py estimate ... --json
 ## Notes
 
 - 首次使用请先运行 `init` 绑定手机号
-- `pay` 命令是核心流程：用户付款成功后，后台自动创建打车订单，Agent 不需要再调用创建订单接口
+- `pay` 命令是核心流程：Agent 调用 `pay --no-wait` 后，必须自动链式执行 `pay-status` → `query-order` → `driver-location` 轮询，全程不需要用户确认
 - 坐标格式为字符串 (如 "116.397128")
+
