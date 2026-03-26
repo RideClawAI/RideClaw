@@ -1,9 +1,10 @@
----
+***
+
 name: rideclaw
 description: A command-line interface tool for ride-hailing service. Provides CLI commands to initialize user profile (home/company address, phone), search locations, estimate prices, pay and create ride orders, query order and driver status, and cancel rides. Use when users need to book a taxi via command line or interact with the Lobster Ride platform.
----
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-# 龙虾出行 CLI
+# 龙虾出行 CLI -v0.1.1
 
 龙虾出行命令行打车工具，支持全流程打车服务。
 
@@ -52,8 +53,26 @@ description: A command-line interface tool for ride-hailing service. Provides CL
 4. **用户确认车型** → 等待用户确认后继续
 5. **支付下单**：
    - 调用 `pay` → 展示支付链接
-   - 每次命令只返回当前状态
-   - Agent 不做自动连续轮询
+   - 调用 `pay-status` → 查询一次支付状态
+   - Agent 不做自动连续轮询，等用户反馈
+6. **支付成功后（重要）**：
+   - 当 `pay-status` 返回支付成功（pay\_status=2）后，**必须切换**到 `query-order` 或 `driver-location` 查询订单进展
+   - **严禁**在支付成功后继续重复调用 `pay-status`，该命令仅用于确认支付是否完成
+   - 用户后续发送"查询"类消息时，应调用 `query-order` 或 `driver-location`，而不是 `pay-status`
+
+## 状态转换规则（Agent 必须遵守）
+
+```
+pay → pay-status（确认支付）
+                ↓ 支付成功（pay_status=2）
+          query-order / driver-location（查看司机和行程）
+                ↓ 司机已接单
+          driver-location（持续跟踪行程）
+```
+
+- `pay-status` 的职责：**仅确认是否已支付**。一旦确认支付成功，后续所有查询都应使用 `query-order` 或 `driver-location`
+- 如果用户说"查一下订单"、"司机到哪了"、"什么状态了"，在支付成功后，都应调用 `query-order` 而非 `pay-status`
+- `pay-status` 现在也会返回司机信息（如果有），Agent 应读取并告知用户
 
 ## 命令参考
 
@@ -82,7 +101,6 @@ python scripts/lobster_cli.py location-search --keywords "北京西站" --city "
 
 请确认序号，或输入更详细的地址重新搜索。
 ```
-
 
 ### estimate
 
@@ -132,7 +150,7 @@ python scripts/lobster_cli.py pay \
   --product-category "201" --product-name "特惠快车" --estimate-price 1000
 ```
 
-生成支付订单并立即返回支付链接。Agent 必须先将支付链接发送给用户，然后再通过 `pay-status` 轮询支付状态。
+生成支付订单并立即返回支付链接。Agent 必须先将支付链接发送给用户，然后再通过 `pay-status` 查询支付状态。
 
 ```bash
 python scripts/lobster_cli.py pay \
@@ -140,7 +158,6 @@ python scripts/lobster_cli.py pay \
   --from-lng "116.404000" --from-lat "39.877912" --from-name "永定门桥" \
   --to-lng "116.655885" --to-lat "39.854873" --to-name "文景东街" \
   --product-category "1" --product-name "快车" --estimate-price 1500 \
-  --no-wait
 ```
 
 **Parameters:**
@@ -152,7 +169,6 @@ python scripts/lobster_cli.py pay \
 - `--product-name`: 车型名称 (required)
 - `--estimate-price`: 预估价格，单位分 (required)
 - `--caller-car-phone`: 叫车人手机号 (optional, 默认从 profile 读取)
-- `--no-wait`: 只生成订单立即返回，不轮询 (Agent 场景必须加)
 
 **Output:**
 
@@ -186,13 +202,33 @@ python scripts/lobster_cli.py pay \
 
 ### pay-status
 
-查询支付状态。
+查询支付状态。支付成功后会同时返回司机信息和行程动态（如果已有），以及 `NEXT_ACTION` 指引。
 
 ```bash
 python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
 ```
 
-**Output (支付成功):**
+**Output (支付成功，司机已接单):**
+
+```text
+PAY STATUS:
+------------------------------------------------------------
+  订单号:   RC20260324405660
+  支付状态: 已支付 (Code: 2)
+  订单状态: 已接单 (Code: 3)
+
+✓ 支付成功！
+
+  司机已接单：
+    司机: 张师傅
+    电话: 138****1234
+    车辆: 丰田卡罗拉 (京A·12345)
+    上车码: 1234
+
+NEXT_ACTION: 支付已完成，请使用 query-order 或 driver-location 查询订单进展，不要再重复调用 pay-status。
+```
+
+**Output (支付成功，等待匹配司机):**
 
 ```text
 🚗 正在为您呼叫车辆
@@ -211,24 +247,24 @@ python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
 PAY STATUS:
 ------------------------------------------------------------
   订单号:   RC20260324405660
-  支付状态: 待支付
-  订单状态: 待支付
+  支付状态: 待支付 (Code: 1)
+  订单状态: 待支付 (Code: 1)
 
-提示: 支付尚未完成。如需查询最新状态，请再次发送消息。
-如需取消订单，请直接回复'取消订单'。
+⚠ 未付款，等待用户支付中。
 ```
 
-**Agent 调用建议（避免阻塞用户输入）：**
+**Agent 调用规则（必须遵守）：**
 
-1. 调用 `pay` → 拿到支付链接、订单号、金额
+1. 调用 `pay` → 拿到支付链接、订单号
 2. **立即**将支付链接发送给用户
-3. 调用 `pay-status --order-no xxx `，
-4. 告知用户可以随时取消订单或查询最新状态
-5. 等待用户主动反馈（如"已支付"、"取消订单"、"查询订单"等）
+3. 调用 `pay-status --order-no xxx` 查询一次
+4. **如果返回中包含** **`NEXT_ACTION`，表示支付已成功，后续查询必须切换到** **`query-order`** **或** **`driver-location`**
+5. **严禁在支付成功后继续调用** **`pay-status`**
+6. 如果未支付，等待用户反馈后再查询
 
 ### query-order
 
-查询订单状态。
+查询订单状态（支付成功后应使用此命令代替 pay-status）。
 
 ```bash
 python scripts/lobster_cli.py query-order --order-no "RC20260324405660"
@@ -249,10 +285,11 @@ python scripts/lobster_cli.py query-order --order-no "RC20260324405660"
   电话: 138****1234
 ```
 
-**Agent 调用建议：**
-- 在支付成功后，查询一次订单状态即可
-- 告知用户可以随时取消订单
-- 后续由用户主动查询或通过其他方式获取状态更新
+**Agent 调用规则：**
+
+- **支付成功后，这是默认的查询命令**，用于替代 pay-status
+- 用户说"查询"、"什么情况了"、"到哪了"时，在支付完成后都应调用此命令
+- 如果司机已接单，可进一步调用 `driver-location` 跟踪行程
 
 ### driver-location
 
@@ -285,10 +322,9 @@ python scripts/lobster_cli.py driver-location --order-id "2j08KLO61gHGsc"
 
 **Agent 调用流程：**
 
-1. `pay-status` 返回支付成功后，调用 `query-order --order-no xxx`，命令会阻塞等待司机接单
-2. 命令返回后，将司机信息告知用户
-3. 然后每隔 10s 调用 `driver-location --order-id xxx`，将行程动态返回给用户
-4. 当 `driver-location` 返回的内容包含行程已完成的语义时，停止轮询，告知用户行程结束
+1. `pay-status` 返回支付成功（含 NEXT\_ACTION）后，切换到 `query-order --order-no xxx`
+2. 如果司机已接单，调用 `driver-location --order-id xxx` 跟踪行程
+3. 当 `driver-location` 返回的内容包含行程已完成的语义时，停止轮询，告知用户行程结束
 
 ### cancel-order
 
@@ -297,6 +333,7 @@ python scripts/lobster_cli.py driver-location --order-id "2j08KLO61gHGsc"
 ```bash
 python scripts/lobster_cli.py cancel-order --order-id "2j08KLO61gHGsc"
 ```
+
 **Output (取消成功):**
 
 ```text
@@ -329,6 +366,7 @@ python scripts/lobster_cli.py cancel-order --order-id "2j08KLO61gHGsc"
 ```bash
 python scripts/lobster_cli.py order-detail --order-no "RC20260324405660"
 ```
+
 **Output:**
 
 ```text
@@ -347,14 +385,15 @@ python scripts/lobster_cli.py order-detail --order-no "RC20260324405660"
 
 ## 订单状态说明
 
-- 待支付：等待用户支付
-- 支付成功：可查询司机匹配状态
-- 呼叫中：等待司机接单
-- 司机已接单：可查询司机位置和行程动态
-- 履约中：行程进行中
-- 行程已完成：行程结束
+- 1-待支付：等待用户支付
+- 2-已支付：可查询司机匹配状态
+- 3-履约中：行程进行中，可查询司机位置和行程动态
+- 4-已完成：行程结束
+- 5-已取消：订单已取消
+- 6-异常：订单异常
 
 ## Notes
 
 - 所有命令支持 `--json` 输出 JSON 格式
 - 坐标格式为字符串（如 "116.397128"）
+

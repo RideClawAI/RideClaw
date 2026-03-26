@@ -219,7 +219,7 @@ class LobsterClient:
 
     def pay_status(self, system_no: str) -> Dict[str, Any]:
         """查询支付状态"""
-        return self._rest_get(f"order/{system_no}/pay-status")
+        return self._rest_get(f"order/{system_no}/detail")
 
     def order_detail(self, system_no: str) -> Dict[str, Any]:
         """查询订单详情"""
@@ -309,18 +309,43 @@ def format_pay_order(data: Dict[str, Any]) -> str:
 
 
 def format_pay_status(data: Dict[str, Any]) -> str:
-    """格式化支付状态"""
+    """格式化支付状态（使用 detail 接口，包含完整订单+司机信息）"""
     order_no = data.get('system_no', 'N/A')
     pay_status = data.get('pay_status')
+    order_status = data.get('status')
     lines = ["PAY STATUS:", "-" * 60]
     lines.append(f"  订单号:   {order_no}")
     lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')} (Code: {pay_status})")
-    lines.append(f"  订单状态: {data.get('order_status_text', 'N/A')} (Code: {data.get('order_status', 'N/A')})")
+    lines.append(f"  订单状态: {data.get('status_text', 'N/A')} (Code: {order_status})")
     lines.append("")
+
     if pay_status == 1:
         lines.append("⚠ 未付款，等待用户支付中。")
     elif pay_status == 2:
         lines.append("✓ 支付成功！")
+        # 展示司机信息（如果已匹配）
+        driver = data.get("driver")
+        if driver:
+            lines.append("")
+            lines.append("  司机已接单：")
+            lines.append(f"    司机: {driver.get('name', 'N/A')}")
+            lines.append(f"    电话: {driver.get('phone', 'N/A')}")
+            lines.append(f"    车辆: {driver.get('car_model', 'N/A')} ({driver.get('car_plate', 'N/A')})")
+            lines.append(f"    上车码: {data.get('phone_last4', 'N/A')}")
+        else:
+            lines.append("  正在为您匹配司机，请耐心等待...")
+        # 展示行程动态（如果有）
+        driver_raw_text = data.get("driver_raw_text")
+        if driver_raw_text:
+            lines.append("")
+            lines.append("  【行程动态】")
+            for raw_line in driver_raw_text.split('\n'):
+                if raw_line.strip():
+                    lines.append(f"    {raw_line.strip()}")
+
+        lines.append("")
+        lines.append("NEXT_ACTION: 支付已完成，请使用 query-order 或 driver-location 查询订单进展，不要再重复调用 pay-status。")
+
     return "\n".join(lines)
 
 
@@ -586,7 +611,7 @@ def main():
             else:
                 driver = data.get("driver")
                 if driver:
-                    print(format_order_status(data))
+                    print(format_order_detail(data))
                 else:
                     print("ORDER STATUS:")
                     print("-" * 60)
