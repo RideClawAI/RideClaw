@@ -311,6 +311,8 @@ def format_pay_status(data: Dict[str, Any]) -> str:
     lines.append(f"  订单号:   {data.get('system_no', 'N/A')}")
     lines.append(f"  支付状态: {data.get('pay_status_text', 'N/A')} (Code: {data.get('pay_status', 'N/A')})")
     lines.append(f"  订单状态: {data.get('order_status_text', 'N/A')} (Code: {data.get('order_status', 'N/A')})")
+    if data.get('pay_status') == 1:
+        lines.append("  ⚠ 未付款，请再次调用pay_status查询支付状态")
     return "\n".join(lines)
 
 
