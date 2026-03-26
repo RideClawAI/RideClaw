@@ -304,9 +304,7 @@ def format_pay_order(data: Dict[str, Any]) -> str:
     lines.append(f"  金额:     ¥{amount_yuan:.2f}")
     lines.append(f"  支付链接: {data.get('pay_url', 'N/A')}")
     lines.append("")
-    lines.append("请打开上方链接完成支付，支付成功后系统将自动为您创建打车订单。")
-    lines.append("")
-    lines.append(f"NEXT_ACTION: 等待5秒后调用 pay-status --order-no {order_no}")
+    lines.append("请打开上方链接完成支付。")
     return "\n".join(lines)
 
 
@@ -320,13 +318,9 @@ def format_pay_status(data: Dict[str, Any]) -> str:
     lines.append(f"  订单状态: {data.get('order_status_text', 'N/A')} (Code: {data.get('order_status', 'N/A')})")
     lines.append("")
     if pay_status == 1:
-        lines.append("⚠ 未付款，等待用户支付中...")
-        lines.append(f"NEXT_ACTION: 等待5秒后再次调用 pay-status --order-no {order_no}")
+        lines.append("⚠ 未付款，等待用户支付中。")
     elif pay_status == 2:
-        lines.append("✓ 支付成功！开始匹配司机...")
-        lines.append(f"NEXT_ACTION: 调用 query-order --order-no {order_no}")
-    else:
-        lines.append(f"NEXT_ACTION: 等待5秒后再次调用 pay-status --order-no {order_no}")
+        lines.append("✓ 支付成功！")
     return "\n".join(lines)
 
 
@@ -338,21 +332,18 @@ def format_order_result(result: Dict[str, Any]) -> str:
 def format_order_status(data: Dict[str, Any]) -> str:
     """格式化司机匹配成功后的订单状态"""
     driver = data.get("driver", {}) or {}
-    order_no = data.get("system_no", "N/A")
     lines = ["ORDER STATUS:", "-" * 60]
     lines.append(f"  已为您匹配到最佳司机！ (Status Code: {data.get('status', 'N/A')})")
     lines.append(f"  司机: {driver.get('name', 'N/A')}")
     lines.append(f"  电话: {driver.get('phone', 'N/A')}")
     lines.append(f"  车辆: {driver.get('car_model', 'N/A')} ({driver.get('car_plate', 'N/A')})")
-    lines.append("")
-    lines.append(f"NEXT_ACTION: 等待10秒后调用 driver-location --order-id {order_no}")
+    lines.append(f"  上车码： {data.get('phone_last4','N/A')}")
     return "\n".join(lines)
 
 
 def format_driver_location(data: Dict[str, Any]) -> str:
     """格式化司机位置与行程动态"""
     driver_raw_text = data.get("query_raw_text")
-    order_no = data.get("system_no", "N/A")
     status = data.get('status')
 
     lines = ["TRIP STATUS & DRIVER LOCATION:", "-" * 60]
@@ -371,19 +362,18 @@ def format_driver_location(data: Dict[str, Any]) -> str:
             lines.append(f"  司机: {driver.get('name', 'N/A')}")
             lines.append(f"  电话: {driver.get('phone', 'N/A')}")
             lines.append(f"  车辆: {driver.get('car_model', 'N/A')} ({driver.get('car_plate', 'N/A')})")
+            lines.append(f"  上车码：{data.get('phone_last4','N/A')}")
         else:
             lines.append("  司机: 暂无司机接单，请耐心等待...")
 
-    lines.append("")
-
-    # 判断行程是否完成（状态码 6 或文本包含完成语义）
-    trip_completed = (status == 6 or
-                     (driver_raw_text and any(keyword in driver_raw_text for keyword in ["行程已完成", "已到达目的地", "订单已完成"])))
+    trip_completed = (
+        status == 6
+        or (driver_raw_text and any(keyword in driver_raw_text for keyword in ["行程已完成", "已到达目的地", "订单已完成"]))
+    )
 
     if trip_completed:
-        lines.append("NEXT_ACTION: DONE 行程已结束")
-    else:
-        lines.append(f"NEXT_ACTION: 等待10秒后再次调用 driver-location --order-id {order_no}")
+        lines.append("")
+        lines.append("行程已结束。")
 
     return "\n".join(lines)
 
@@ -425,6 +415,7 @@ def format_order_detail(data: Dict[str, Any]) -> str:
     lines.append(f"  车型:       {data.get('product_name', 'N/A')}")
     lines.append(f"  预估价格:   {est_str}")
     lines.append(f"  实际价格:   {actual_str}")
+    lines.append(f"  上车码：    {data.get('phone_last4','N/A')}")
 
     # 获取司机基础信息（主要作为结构化数据的补充备份）
     # 如果行程动态里已经包含了详细的司机信息，这里的结构化展示依然保留，作为兜底
@@ -537,16 +528,6 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # ── 本地命令 ──
-
-    if args.command == "profile":
-        profile = load_profile()
-        if args.json:
-            print(json.dumps(profile, indent=2, ensure_ascii=False))
-        else:
-            print(format_profile(profile))
-        return
-
     # ── 网络命令 ──
     try:
         client = LobsterClient(base_url=args.base_url)
@@ -607,13 +588,10 @@ def main():
                 if driver:
                     print(format_order_status(data))
                 else:
-                    order_no = data.get('system_no', 'N/A')
                     print("ORDER STATUS:")
                     print("-" * 60)
                     print(f"  订单状态: {data.get('status_text', '未知')} (Code: {data.get('status', 'N/A')})")
                     print("  正在为您匹配最佳司机，请耐心等待...")
-                    print("")
-                    print(f"NEXT_ACTION: 等待5秒后再次调用 query-order --order-no {order_no}")
 
         elif args.command == "driver-location":
             result = client.get_driver_location(args.order_id)
