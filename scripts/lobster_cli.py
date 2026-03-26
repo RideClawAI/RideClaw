@@ -233,7 +233,9 @@ class LobsterClient:
 
     def cancel_order(self, system_no: str) -> Dict[str, Any]:
         """取消订单"""
-        return self._rest_post(f"order/{system_no}/cancel")
+        return self._rest_post(f"order/cancel", {
+            "system_no": system_no,
+        })
 
 
 # ── 输出格式化 ────────────────────────────────────────────────────────────────
