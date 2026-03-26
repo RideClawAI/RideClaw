@@ -1,9 +1,7 @@
-***
-
-name: lobster_ride
+---
+name: rideclaw
 description: A command-line interface tool for ride-hailing service. Provides CLI commands to initialize user profile (home/company address, phone), search locations, estimate prices, pay and create ride orders, query order and driver status, and cancel rides. Use when users need to book a taxi via command line or interact with the Lobster Ride platform.
-
-***
+---
 
 # 龙虾出行 CLI
 
@@ -30,9 +28,7 @@ description: A command-line interface tool for ride-hailing service. Provides CL
 4. **用户确认车型** → 等待用户确认后继续
 5. **支付下单（Agent 自动链式执行）**：
    - 调用 `pay` → 展示支付链接
-   - 每 5s 轮询 `pay-status` → 反馈"等待支付中..."，直到 `pay_status == 2`
-   - 每 5s 轮询 `query-order` → 反馈"匹配司机中..."，直到返回含 `driver`
-   - 每 10s 轮询 `driver-location` → 播报行程动态，直到"行程已完成"
+   - **之后只需执行每条命令输出末尾的 `NEXT_ACTION` 指令即可**，无需记忆完整流程
 
 ## 命令参考
 
@@ -66,41 +62,37 @@ python scripts/lobster_cli.py pay \
   --product-category "201" --product-name "特惠快车" --estimate-price 1000
 ```
 
-**Agent 执行流程：**
-1. 调用 `pay` → 立即展示支付链接
-2. 每 5s 调用 `pay-status` → `pay_status == 2` 时停止，告知"支付成功"
-3. 每 5s 调用 `query-order` → 返回含 `driver` 时停止，告知司机信息
-4. 每 10s 调用 `driver-location` → 返回含"行程已完成"语义时停止
+**输出末尾包含 `NEXT_ACTION` 指令，Agent 只需执行该指令即可。**
 
 ### pay-status
 
-单次查询支付状态。Agent 每 5s 轮询。
+查询支付状态。
 
 ```bash
 python scripts/lobster_cli.py pay-status --order-no "RC20260324405660"
 ```
 
-**判断：** `pay_status == 2` → 支付成功
+**输出末尾包含 `NEXT_ACTION` 指令，Agent 只需执行该指令即可。**
 
 ### query-order
 
-单次查询订单状态。Agent 每 5s 轮询。
+查询订单状态。
 
 ```bash
 python scripts/lobster_cli.py query-order --order-no "RC20260324405660"
 ```
 
-**判断：** 返回含 `driver` 字段 → 司机已接单
+**输出末尾包含 `NEXT_ACTION` 指令，Agent 只需执行该指令即可。**
 
 ### driver-location
 
-单次获取司机位置与行程动态。Agent 每 10s 轮询。
+获取司机位置与行程动态。
 
 ```bash
 python scripts/lobster_cli.py driver-location --order-id "2j08KLO61gHGsc"
 ```
 
-**判断：** 返回含"行程已完成"/"已到达目的地"语义 → 行程结束
+**输出末尾包含 `NEXT_ACTION` 指令，Agent 只需执行该指令即可。当输出 `NEXT_ACTION: DONE` 时表示行程结束。**
 
 ### cancel-order
 
@@ -120,18 +112,16 @@ python scripts/lobster_cli.py order-detail --order-no "RC20260324405660"
 
 ## 订单状态说明
 
-| 状态 | 含义 | Agent 动作 |
-|------|------|-----------|
-| 待支付 | 等待用户支付 | 轮询 `pay-status` |
-| 支付成功 | 支付完成，后台创建订单 | 开始轮询 `query-order` |
-| 呼叫中 | 等待司机接单 | 继续轮询 `query-order` |
-| 司机已接单 | 司机接单 | 开始轮询 `driver-location` |
-| 履约中 | 行程进行中 | 继续轮询 `driver-location` |
-| 行程已完成 | 行程结束 | 停止轮询 |
+所有命令输出末尾都包含 `NEXT_ACTION` 指令，Agent 只需执行该指令即可自动完成状态流转：
 
-**关键：**
-- "支付成功" ≠ 打车完成，必须继续轮询直到"行程已完成"
-- 所有命令都是单次查询立即返回，由 Agent 控制轮询节奏
+- 待支付 → 轮询 `pay-status`
+- 支付成功 → 转到 `query-order`
+- 呼叫中 → 轮询 `query-order`
+- 司机已接单 → 转到 `driver-location`
+- 履约中 → 轮询 `driver-location`
+- 行程已完成 → `NEXT_ACTION: DONE`
+
+**关键：Agent 无需记忆完整流程，只需执行上一条输出的 `NEXT_ACTION` 即可。**
 
 ## Notes
 
